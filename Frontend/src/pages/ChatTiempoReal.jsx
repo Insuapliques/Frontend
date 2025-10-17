@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useEffect, useState, useRef } from "react"
-import { db, storage, API_BASE_URL } from "../firebaseConfig"
+import { db } from "../firebaseConfig"
 import {
   collection,
   query,
@@ -13,7 +13,6 @@ import {
   setDoc,
   getDoc,
 } from "firebase/firestore"
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage"
 import {
   FaPaperclip,
   FaPaperPlane,
@@ -25,7 +24,19 @@ import {
   FaTimes,
   FaFile,
   FaMicrophone,
+  FaRobot,
+  FaUserTie,
+  FaLock,
+  FaUnlock,
 } from "react-icons/fa"
+import {
+  getActiveConversations,
+  takeoverConversation,
+  releaseConversation,
+  sendPanelMessage,
+  getConversationMessages,
+  getConversationStatus,
+} from "../services/apiService"
 
 function ChatTiempoReal() {
   const [messages, setMessages] = useState([])
@@ -36,10 +47,14 @@ function ChatTiempoReal() {
   const [selectedUser, setSelectedUser] = useState(null)
   const [solicitudes, setSolicitudes] = useState([])
   const [isTyping, setIsTyping] = useState(false)
-  const [noLeidos, setNoLeidos] = useState({})
   const [showUserInfo, setShowUserInfo] = useState(true)
   const [filePreview, setFilePreview] = useState(null)
   const [clientesData, setClientesData] = useState({})
+
+  // New state for backend integration
+  const [conversationStates, setConversationStates] = useState({}) // Track modoHumano state per conversation
+  const [loading, setLoading] = useState(false)
+  const [controlLoading, setControlLoading] = useState(false)
 
   const uniqueUsers = [...new Set(messages.map((msg) => msg.user))].filter((user) => user !== "operador")
 
@@ -123,7 +138,7 @@ function ChatTiempoReal() {
       console.log("[v0] Fetching WhatsApp profile for:", phoneNumber)
       // Note: This requires WhatsApp Business API access token
       // You'll need to replace this with your actual API endpoint
-      const response = await fetch(`${API_BASE_URL}/whatsapp/profile/${phoneNumber}`, {
+      const response = await fetch(`${process.env.REACT_APP_API_BASE_URL || 'http://localhost:3008'}/whatsapp/profile/${phoneNumber}`, {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
@@ -158,6 +173,128 @@ function ChatTiempoReal() {
     return null
   }
 
+  // Load active conversations from backend
+  const loadActiveConversations = async () => {
+    try {
+      setLoading(true)
+      const response = await getActiveConversations(50)
+      if (response.success) {
+        // Update conversation states
+        const states = {}
+        response.data.conversations.forEach(conv => {
+          states[conv.phone] = {
+            modoHumano: conv.modoHumano,
+            estadoActual: conv.estadoActual,
+            productoActual: conv.productoActual,
+            unreadCount: conv.unreadCount || 0,
+          }
+        })
+        setConversationStates(states)
+      }
+    } catch (error) {
+      console.error("[Backend] Error loading conversations:", error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Load messages from backend for selected user
+  // Note: Currently using Firebase real-time listener, but this function is available
+  // for future migration to backend-only message loading
+  // eslint-disable-next-line no-unused-vars
+  const loadBackendMessages = async (phone) => {
+    try {
+      const response = await getConversationMessages(phone, 100)
+      if (response.success && response.data.messages) {
+        // Transform backend messages to Firebase format for compatibility
+        const transformedMessages = response.data.messages.map(msg => ({
+          id: msg.id,
+          text: msg.text,
+          fileUrl: msg.fileUrl,
+          fileType: msg.fileType || 'text',
+          origen: msg.origen, // 'cliente', 'bot', or 'operador'
+          user: phone,
+          timestamp: {
+            seconds: new Date(msg.timestamp).getTime() / 1000,
+          },
+        }))
+        return transformedMessages
+      }
+    } catch (error) {
+      console.error("[Backend] Error loading messages:", error)
+    }
+    return []
+  }
+
+  // Check conversation status from backend
+  const checkConversationStatus = async (phone) => {
+    try {
+      const response = await getConversationStatus(phone)
+      if (response.success && response.data) {
+        setConversationStates(prev => ({
+          ...prev,
+          [phone]: {
+            modoHumano: response.data.modoHumano,
+            estadoActual: response.data.estadoActual,
+            productoActual: response.data.productoActual,
+          },
+        }))
+        return response.data
+      }
+    } catch (error) {
+      console.error("[Backend] Error checking conversation status:", error)
+    }
+    return null
+  }
+
+  // Take control of conversation
+  const handleTakeControl = async (phone) => {
+    try {
+      setControlLoading(true)
+      const response = await takeoverConversation(phone)
+      if (response.success) {
+        setConversationStates(prev => ({
+          ...prev,
+          [phone]: {
+            ...prev[phone],
+            modoHumano: true,
+          },
+        }))
+        alert('✅ Control tomado exitosamente. Ahora puedes responder manualmente.')
+        await checkConversationStatus(phone)
+      }
+    } catch (error) {
+      console.error("[Backend] Error taking control:", error)
+      alert('❌ Error al tomar control: ' + (error.message || 'Error desconocido'))
+    } finally {
+      setControlLoading(false)
+    }
+  }
+
+  // Release control of conversation
+  const handleReleaseControl = async (phone) => {
+    try {
+      setControlLoading(true)
+      const response = await releaseConversation(phone)
+      if (response.success) {
+        setConversationStates(prev => ({
+          ...prev,
+          [phone]: {
+            ...prev[phone],
+            modoHumano: false,
+          },
+        }))
+        alert('✅ Control liberado. El bot volverá a responder automáticamente.')
+        await checkConversationStatus(phone)
+      }
+    } catch (error) {
+      console.error("[Backend] Error releasing control:", error)
+      alert('❌ Error al liberar control: ' + (error.message || 'Error desconocido'))
+    } finally {
+      setControlLoading(false)
+    }
+  }
+
   const calculateRecentUnread = (user) => {
     const now = Date.now()
     const thirtyMinutesAgo = now - 30 * 60 * 1000
@@ -189,6 +326,17 @@ function ChatTiempoReal() {
     return unreadCount
   }
 
+  // Load conversations from backend periodically
+  useEffect(() => {
+    loadActiveConversations()
+
+    // Reload conversations every 5 seconds
+    const conversationInterval = setInterval(loadActiveConversations, 5000)
+
+    return () => clearInterval(conversationInterval)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     const loadClientesData = async () => {
       const newClientesData = {}
@@ -217,14 +365,6 @@ function ChatTiempoReal() {
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const msgs = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
       setMessages(msgs)
-
-      const nuevos = {}
-      uniqueUsers.forEach((user) => {
-        if (user !== selectedUser) {
-          nuevos[user] = calculateRecentUnread(user)
-        }
-      })
-      setNoLeidos(nuevos)
     })
     return () => unsubscribe()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -264,39 +404,56 @@ function ChatTiempoReal() {
   const handleSend = async () => {
     if ((!input.trim() && !file) || !selectedUser) return
 
-    let fileUrl = ""
-    let fileType = ""
-
-    if (file) {
-      const storageRef = ref(storage, `liveChat/${Date.now()}_${file.name}`)
-      await uploadBytes(storageRef, file)
-      fileUrl = await getDownloadURL(storageRef)
-      fileType = file.type.startsWith("image") ? "image" : file.type.startsWith("audio") ? "audio" : "file"
+    // Check if we have control before sending
+    const hasControl = conversationStates[selectedUser]?.modoHumano
+    if (!hasControl) {
+      alert("⚠️ Debes tomar control de la conversación antes de enviar mensajes")
+      return
     }
+
+    const messageText = input.trim()
+    setInput("")
+    setLoading(true)
 
     try {
-      await fetch(`${API_BASE_URL}/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          number: selectedUser,
-          message: input,
-          urlMedia: fileUrl || null,
-        }),
-      })
+      // For now, we only support text messages via the panel API
+      // File upload would need to be implemented separately
+      if (file) {
+        alert("⚠️ El envío de archivos no está disponible en modo panel. Solo se enviará el texto.")
+        setFile(null)
+        setFilePreview(null)
+      }
 
-      await updateDoc(doc(db, "solicitudesHumanas", selectedUser), {
-        atendido: true,
-        atendidoPor: "operador",
-        atendidoEn: new Date(),
-      })
+      // Send message via backend panel API
+      const response = await sendPanelMessage(selectedUser, messageText)
+
+      if (response.success) {
+        // Message sent successfully, it will appear via real-time updates
+        console.log("[Backend] Message sent successfully")
+
+        // Update Firebase for backward compatibility
+        try {
+          await updateDoc(doc(db, "solicitudesHumanas", selectedUser), {
+            atendido: true,
+            atendidoPor: "operador",
+            atendidoEn: new Date(),
+          })
+        } catch (fbError) {
+          console.log("[Firebase] Could not update solicitudesHumanas:", fbError)
+        }
+      } else {
+        alert("❌ Error al enviar mensaje: " + (response.error || "Error desconocido"))
+        setInput(messageText) // Restore message
+      }
     } catch (error) {
-      console.error("Error al enviar mensaje:", error)
+      console.error("[Backend] Error sending message:", error)
+      alert("❌ Error al enviar mensaje: " + (error.message || "Error desconocido"))
+      setInput(messageText) // Restore message
+    } finally {
+      setLoading(false)
+      setFile(null)
+      setFilePreview(null)
     }
-
-    setInput("")
-    setFile(null)
-    setFilePreview(null)
   }
 
   const atenderSolicitud = async (id, user) => {
@@ -308,7 +465,8 @@ function ChatTiempoReal() {
         atendidoEn: new Date(),
       })
       setSelectedUser(user)
-      setNoLeidos((prev) => ({ ...prev, [user]: 0 }))
+      // Also take control via backend API
+      await handleTakeControl(user)
     } catch (error) {
       console.error("Error al atender solicitud:", error)
     }
@@ -392,7 +550,6 @@ function ChatTiempoReal() {
                   key={user}
                   onClick={() => {
                     setSelectedUser(user)
-                    setNoLeidos((prev) => ({ ...prev, [user]: 0 }))
                   }}
                   className={`p-4 flex items-start gap-3 cursor-pointer transition-all duration-200 border-b border-gray-100 hover:bg-blue-50 ${
                     isActive ? "bg-blue-50 border-l-4 border-l-blue-600" : ""
@@ -503,12 +660,45 @@ function ChatTiempoReal() {
                   <h2 className="font-semibold text-gray-900">{clientesData[selectedUser]?.name || selectedUser}</h2>
                   <p className="text-xs text-gray-500 flex items-center gap-1">
                     <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                    En línea
+                    {conversationStates[selectedUser]?.modoHumano ? (
+                      <span className="text-orange-600 font-medium flex items-center gap-1">
+                        <FaUserTie size={10} />
+                        Modo Manual
+                      </span>
+                    ) : (
+                      <span className="text-purple-600 font-medium flex items-center gap-1">
+                        <FaRobot size={10} />
+                        Modo Bot
+                      </span>
+                    )}
                   </p>
                 </div>
               </div>
 
               <div className="flex items-center gap-2">
+                {/* Control buttons */}
+                {conversationStates[selectedUser]?.modoHumano ? (
+                  <button
+                    onClick={() => handleReleaseControl(selectedUser)}
+                    disabled={controlLoading}
+                    className="px-3 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors flex items-center gap-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Liberar control - El bot volverá a responder automáticamente"
+                  >
+                    <FaUnlock size={14} />
+                    Liberar Control
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleTakeControl(selectedUser)}
+                    disabled={controlLoading}
+                    className="px-3 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors flex items-center gap-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Tomar control - Podrás responder manualmente"
+                  >
+                    <FaLock size={14} />
+                    Tomar Control
+                  </button>
+                )}
+
                 <button
                   onClick={() => setShowUserInfo(!showUserInfo)}
                   className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
@@ -552,9 +742,10 @@ function ChatTiempoReal() {
 
                       {/* Mensaje */}
                       <div
-                        className={`flex items-end gap-2 ${isOperator ? "flex-row-reverse" : "flex-row"} animate-fade-in`}
+                        className={`flex items-end gap-2 ${isOperator || msg.origen === "bot" ? "flex-row-reverse" : "flex-row"} animate-fade-in`}
                       >
-                        {!isOperator && (
+                        {/* Avatar - only show for client messages */}
+                        {msg.origen === "cliente" && (
                           <>
                             {clientesData[msg.user]?.profilePicture ? (
                               <img
@@ -575,12 +766,28 @@ function ChatTiempoReal() {
                           </>
                         )}
 
+                        {/* Bot avatar */}
+                        {msg.origen === "bot" && (
+                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center text-white text-xs font-semibold flex-shrink-0 shadow">
+                            <FaRobot size={16} />
+                          </div>
+                        )}
+
+                        {/* Operator avatar */}
+                        {msg.origen === "operador" && (
+                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center text-white text-xs font-semibold flex-shrink-0 shadow">
+                            <FaUserTie size={16} />
+                          </div>
+                        )}
+
                         {/* Burbuja de mensaje */}
-                        <div className={`max-w-md ${isOperator ? "items-end" : "items-start"} flex flex-col`}>
+                        <div className={`max-w-md ${isOperator || msg.origen === "bot" ? "items-end" : "items-start"} flex flex-col`}>
                           <div
                             className={`px-4 py-2 rounded-2xl shadow-sm transition-all duration-200 hover:shadow-md ${
-                              isOperator
-                                ? "bg-gradient-to-br from-blue-600 to-blue-700 text-white rounded-br-sm"
+                              msg.origen === "operador"
+                                ? "bg-gradient-to-br from-green-500 to-green-600 text-white rounded-br-sm"
+                                : msg.origen === "bot"
+                                ? "bg-gradient-to-br from-purple-500 to-purple-600 text-white rounded-br-sm"
                                 : "bg-white border border-gray-200 text-gray-800 rounded-bl-sm"
                             }`}
                           >
@@ -621,13 +828,22 @@ function ChatTiempoReal() {
                             )}
                           </div>
 
-                          {/* Hora del mensaje */}
-                          <span
-                            className={`text-xs text-gray-500 mt-1 px-1 ${isOperator ? "text-right" : "text-left"}`}
-                          >
-                            {formatTime(msg.timestamp)}
-                            {isOperator && <FaCheckDouble className="inline ml-1 text-blue-500" size={10} />}
-                          </span>
+                          {/* Hora del mensaje y origen */}
+                          <div className={`flex items-center gap-2 mt-1 px-1 ${isOperator || msg.origen === "bot" ? "flex-row-reverse" : "flex-row"}`}>
+                            <span className="text-xs text-gray-500">
+                              {formatTime(msg.timestamp)}
+                            </span>
+                            <span className={`text-xs font-medium ${
+                              msg.origen === "operador" ? "text-green-600" :
+                              msg.origen === "bot" ? "text-purple-600" :
+                              "text-gray-600"
+                            }`}>
+                              {msg.origen === "operador" ? "Operador" :
+                               msg.origen === "bot" ? "Bot" :
+                               "Cliente"}
+                            </span>
+                            {(isOperator || msg.origen === "operador") && <FaCheckDouble className="inline text-blue-500" size={10} />}
+                          </div>
                         </div>
                       </div>
                     </React.Fragment>
@@ -676,6 +892,25 @@ function ChatTiempoReal() {
             {/* Input de mensaje */}
             <div className="border-t border-gray-200 bg-white p-4">
               <div className="max-w-4xl mx-auto">
+                {/* Control warning banner */}
+                {!conversationStates[selectedUser]?.modoHumano && (
+                  <div className="mb-3 bg-yellow-50 border border-yellow-300 rounded-lg p-3 flex items-center gap-2">
+                    <FaLock className="text-yellow-600" />
+                    <p className="text-sm text-yellow-800">
+                      <strong>Control del Bot Activo.</strong> Para responder manualmente, haz clic en "Tomar Control" arriba.
+                    </p>
+                  </div>
+                )}
+
+                {conversationStates[selectedUser]?.modoHumano && (
+                  <div className="mb-3 bg-green-50 border border-green-300 rounded-lg p-3 flex items-center gap-2">
+                    <FaUnlock className="text-green-600" />
+                    <p className="text-sm text-green-800">
+                      <strong>Control Manual Activo.</strong> Puedes responder al cliente. El bot no responderá automáticamente.
+                    </p>
+                  </div>
+                )}
+
                 {/* Preview de archivo */}
                 {filePreview && (
                   <div className="mb-3 relative inline-block">
@@ -707,18 +942,20 @@ function ChatTiempoReal() {
 
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="p-3 hover:bg-gray-100 rounded-full transition-colors flex-shrink-0"
+                    disabled={!conversationStates[selectedUser]?.modoHumano}
+                    className="p-3 hover:bg-gray-100 rounded-full transition-colors flex-shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
                     title="Adjuntar archivo"
                   >
                     <FaPaperclip className="text-gray-600" size={20} />
                   </button>
 
-                  <div className="flex-1 bg-gray-100 rounded-2xl border border-gray-200 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-200 transition-all">
+                  <div className={`flex-1 bg-gray-100 rounded-2xl border border-gray-200 transition-all ${conversationStates[selectedUser]?.modoHumano ? 'focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-200' : 'opacity-50'}`}>
                     <textarea
-                      placeholder="Escribe un mensaje..."
+                      placeholder={conversationStates[selectedUser]?.modoHumano ? "Escribe un mensaje..." : "Toma control para escribir..."}
                       className="w-full px-4 py-3 bg-transparent resize-none focus:outline-none text-gray-800 placeholder-gray-500"
                       value={input}
                       rows={1}
+                      disabled={!conversationStates[selectedUser]?.modoHumano || loading}
                       onChange={(e) => {
                         setInput(e.target.value)
                         setIsTyping(true)
@@ -740,8 +977,8 @@ function ChatTiempoReal() {
 
                   <button
                     onClick={handleSend}
-                    disabled={!input.trim() && !file}
-                    className="p-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-full transition-all duration-200 flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transform hover:scale-105"
+                    disabled={!input.trim() || !conversationStates[selectedUser]?.modoHumano || loading}
+                    className="p-3 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-full transition-all duration-200 flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transform hover:scale-105"
                     title="Enviar mensaje"
                   >
                     <FaPaperPlane size={18} />
@@ -749,7 +986,10 @@ function ChatTiempoReal() {
                 </div>
 
                 <p className="text-xs text-gray-500 mt-2 text-center">
-                  Presiona Enter para enviar • Shift + Enter para nueva línea
+                  {conversationStates[selectedUser]?.modoHumano ?
+                    "Presiona Enter para enviar • Shift + Enter para nueva línea" :
+                    "Debes tomar control para enviar mensajes"
+                  }
                 </p>
               </div>
             </div>
@@ -817,6 +1057,33 @@ function ChatTiempoReal() {
                   </p>
                 </div>
               </div>
+
+              {/* Estado de conversación */}
+              {conversationStates[selectedUser] && (
+                <div className="p-3 bg-gray-50 rounded-lg">
+                  <p className="text-xs text-gray-500 mb-2">Estado de Conversación</p>
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-gray-600">Modo:</span>
+                      <span className={`font-medium ${conversationStates[selectedUser].modoHumano ? 'text-orange-600' : 'text-purple-600'}`}>
+                        {conversationStates[selectedUser].modoHumano ? '👤 Manual' : '🤖 Automático'}
+                      </span>
+                    </div>
+                    {conversationStates[selectedUser].estadoActual && (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-gray-600">Estado:</span>
+                        <span className="font-medium text-gray-900">{conversationStates[selectedUser].estadoActual}</span>
+                      </div>
+                    )}
+                    {conversationStates[selectedUser].productoActual && (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-gray-600">Producto:</span>
+                        <span className="font-medium text-gray-900">{conversationStates[selectedUser].productoActual}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Estadísticas */}

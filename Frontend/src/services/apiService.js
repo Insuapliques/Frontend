@@ -148,19 +148,75 @@ export const checkAgentHealth = async () => {
 };
 
 // ============================================================================
-// PANEL API - Envío de mensajes desde el panel
+// PANEL API - Control de conversaciones y envío de mensajes
 // ============================================================================
 
 /**
- * Enviar mensaje desde el panel de operador
+ * Obtener lista de conversaciones activas
+ * @param {number} limit - Número de conversaciones a obtener (default: 50)
+ * @returns {Promise<{success: boolean, data: {conversations: Array, total: number}}>}
+ */
+export const getActiveConversations = async (limit = 50) => {
+  return apiRequest(`/panel/conversations?limit=${limit}`, {
+    method: 'GET',
+  });
+};
+
+/**
+ * Tomar control de una conversación (activar modo humano)
+ * @param {string} phone - Número de teléfono del usuario
+ * @returns {Promise<{success: boolean, message: string, phone: string, modoHumano: boolean}>}
+ */
+export const takeoverConversation = async (phone) => {
+  return apiRequest(`/panel/takeover/${phone}`, {
+    method: 'POST',
+  });
+};
+
+/**
+ * Liberar control de una conversación (desactivar modo humano)
+ * @param {string} phone - Número de teléfono del usuario
+ * @returns {Promise<{success: boolean, message: string, phone: string, modoHumano: boolean}>}
+ */
+export const releaseConversation = async (phone) => {
+  return apiRequest(`/panel/release/${phone}`, {
+    method: 'POST',
+  });
+};
+
+/**
+ * Enviar mensaje desde el panel de operador (requiere control previo)
  * @param {string} phone - Número de teléfono del usuario
  * @param {string} text - Texto del mensaje
- * @returns {Promise<{ok: boolean}>}
+ * @returns {Promise<{success: boolean, message: string}>}
  */
 export const sendPanelMessage = async (phone, text) => {
   return apiRequest('/panel/send', {
     method: 'POST',
     body: JSON.stringify({ phone, text }),
+  });
+};
+
+/**
+ * Obtener mensajes de una conversación
+ * @param {string} phone - Número de teléfono del usuario
+ * @param {number} limit - Número de mensajes a obtener (default: 50)
+ * @returns {Promise<{success: boolean, data: {phone: string, messages: Array, count: number}}>}
+ */
+export const getConversationMessages = async (phone, limit = 50) => {
+  return apiRequest(`/panel/messages/${phone}?limit=${limit}`, {
+    method: 'GET',
+  });
+};
+
+/**
+ * Verificar estado de una conversación
+ * @param {string} phone - Número de teléfono del usuario
+ * @returns {Promise<{success: boolean, data: Object}>}
+ */
+export const getConversationStatus = async (phone) => {
+  return apiRequest(`/panel/status/${phone}`, {
+    method: 'GET',
   });
 };
 
@@ -232,7 +288,12 @@ export default {
   checkAgentHealth,
 
   // Panel
+  getActiveConversations,
+  takeoverConversation,
+  releaseConversation,
   sendPanelMessage,
+  getConversationMessages,
+  getConversationStatus,
 
   // Training
   getTrainingData,
