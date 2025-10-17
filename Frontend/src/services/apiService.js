@@ -27,7 +27,19 @@ const apiRequest = async (endpoint, options = {}) => {
 
   try {
     const response = await fetch(url, config);
-    const data = await response.json();
+
+    // Intentar parsear como JSON
+    let data;
+    const contentType = response.headers.get('content-type');
+
+    if (contentType && contentType.includes('application/json')) {
+      data = await response.json();
+    } else {
+      // Si no es JSON, obtener el texto crudo
+      const textError = await response.text();
+      console.error(`[API] Non-JSON response from ${endpoint}:`, textError);
+      throw new Error(`Server error: ${textError}`);
+    }
 
     if (!response.ok) {
       throw new Error(data.error || data.details || `HTTP error! status: ${response.status}`);

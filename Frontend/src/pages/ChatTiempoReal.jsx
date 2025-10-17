@@ -722,7 +722,7 @@ function ChatTiempoReal() {
             </div>
 
             {/* Mensajes del chat */}
-            <div className="flex-1 min-h-0 overflow-y-auto p-6 bg-gradient-to-b from-gray-50 to-white">
+            <div className="flex-1 overflow-y-auto p-6 bg-gradient-to-b from-gray-50 to-white" style={{ minHeight: 0, maxHeight: 'calc(100vh - 280px)' }}>
               <div className="max-w-4xl mx-auto space-y-4">
                 {filteredMessages.map((msg, index) => {
                   const isOperator = msg.origen === "operador"
