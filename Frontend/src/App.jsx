@@ -7,6 +7,7 @@ import HistorialConversaciones from "./pages/HistorialConversaciones";
 import EntrenamientoConfig from "./pages/EntrenamientoConfig";
 import ChatTiempoReal from "./pages/ChatTiempoReal";
 import ProductosChatbotPanel from "./pages/ProductosChatbotPanel";
+import AgentTest from "./pages/AgentTest";
 import Login from "./pages/Login";
 
 function App() {
@@ -35,6 +36,7 @@ function App() {
             <CustomLink to="/entrenamiento">Entrenamiento</CustomLink>
             <CustomLink to="/Documentos">Documentos</CustomLink>
             <CustomLink to="/chat">Chat en Vivo</CustomLink>
+            <CustomLink to="/agent-test">🤖 Test AI</CustomLink>
             <button
               onClick={handleLogout}
               className="text-green-400 font-semibold hover:text-green-300 transition"
@@ -50,6 +52,7 @@ function App() {
             <Route path="/entrenamiento" element={<EntrenamientoConfig />} />
             <Route path="/Documentos" element={<ProductosChatbotPanel />} />
             <Route path="/chat" element={<ChatTiempoReal />} />
+            <Route path="/agent-test" element={<AgentTest />} />
           </Routes>
         </main>
       </div>
